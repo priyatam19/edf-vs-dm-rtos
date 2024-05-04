@@ -21,13 +21,8 @@
 */
 
 #include "scheduler.h"
-#include "PerformanceMetrics.h"
 
 // uint8_t schedSchedulingPolicy = schedSCHEDULING_POLICY_RMS;
-
-static uint32_t totalTicks = 0;
-
-
 #if( schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_EDF )
 	#include "list.h"
 #endif /* schedSCHEDULING_POLICY_EDF */
@@ -44,6 +39,21 @@ static uint32_t totalTicks = 0;
 #else
 	#define schedUSE_TCB_ARRAY 1
 #endif /* schedSCHEDULING_POLICY_EDF */
+
+static uint32_t contextSwitchCount = 0;
+static uint32_t idleTicks = 0;
+static uint32_t totalTicks = 0;
+
+// void taskStart(SchedTCB_t *task);
+// void taskComplete(SchedTCB_t *task);
+
+
+
+
+
+
+
+
 
 /* Extended Task control block for managing periodic tasks within this library. */
 typedef struct xExtended_TCB
@@ -520,40 +530,6 @@ static void prvPeriodicTaskCode( void *pvParameters )
 	}
 }
 
-/*Performance Metrics*/
-extern "C" void externTaskSwitchedIn() {
-    SchedTCB_t* currentTask = (SchedTCB_t*) pvTaskGetThreadLocalStoragePointer(xTaskGetCurrentTaskHandle(), schedTHREAD_LOCAL_STORAGE_POINTER_INDEX);
-    if (currentTask) {
-        currentTask->startTime = xTaskGetTickCount();  // Capture start time
-    }
-}
-
-extern "C" void externTaskSwitchedOut() {
-    SchedTCB_t* currentTask = (SchedTCB_t*) pvTaskGetThreadLocalStoragePointer(xTaskGetCurrentTaskHandle(), schedTHREAD_LOCAL_STORAGE_POINTER_INDEX);
-    if (currentTask) {
-        uint32_t now = xTaskGetTickCount();
-        uint32_t responseTime = now - currentTask->startTime;
-        currentTask->responseTime += responseTime;  // Accumulate response time
-        if (responseTime > currentTask->maxResponseTime) {
-            currentTask->maxResponseTime = responseTime;  // Update max response time
-        }
-        if (now > currentTask->xAbsoluteDeadline) {
-            currentTask->deadlineMisses++;  // Count deadline misses
-        }
-    }
-}
-
-void printMetrics() {
-    Serial.println("Performance Metrics:");
-    for (int i = 0; i < schedMAX_NUMBER_OF_PERIODIC_TASKS; i++) {
-        if (xTCBArray[i].xInUse) {
-            Serial.print("Task "); Serial.print(i); Serial.println(" Metrics:");
-            Serial.print("   Total Response Time: "); Serial.println(xTCBArray[i].responseTime);
-            Serial.print("   Deadline Misses: "); Serial.println(xTCBArray[i].deadlineMisses);
-            Serial.print("   Worst Case Response Time: "); Serial.println(xTCBArray[i].maxResponseTime);
-        }
-    }
-}/*Performance Metrics*/
 
 
 /* Creates a periodic task. */
@@ -1122,17 +1098,115 @@ SchedTCB_t *pxShortestTaskPointer, *pxTCB;
 			#endif /* schedUSE_TIMING_ERROR_DETECTION_EXECUTION_TIME */
 		}
 
-		#if( schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1 )
+		// #if( schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1 )
 			xSchedulerWakeCounter++;
 			if( xSchedulerWakeCounter == schedSCHEDULER_TASK_PERIOD )
 			{
 				xSchedulerWakeCounter = 0;
 				prvWakeScheduler();
 			}
-		#endif /* schedUSE_TIMING_ERROR_DETECTION_DEADLINE */
+		// #endif /* schedUSE_TIMING_ERROR_DETECTION_DEADLINE */
 	}
 #endif /* schedUSE_SCHEDULER_TASK */
 
+
+
+extern "C" void externTaskSwitchedIn() {
+    contextSwitchCount++;
+    SchedTCB_t* currentTask = (SchedTCB_t*) pvTaskGetThreadLocalStoragePointer(xTaskGetCurrentTaskHandle(), schedTHREAD_LOCAL_STORAGE_POINTER_INDEX);
+    if (currentTask) {
+        currentTask->startTime = xTaskGetTickCount();  // Capture start time
+    }
+}
+
+extern "C" void externTaskSwitchedOut() {
+    SchedTCB_t* currentTask = (SchedTCB_t*) pvTaskGetThreadLocalStoragePointer(xTaskGetCurrentTaskHandle(), schedTHREAD_LOCAL_STORAGE_POINTER_INDEX);
+    if (currentTask) {
+        uint32_t now = xTaskGetTickCount();
+        uint32_t responseTime = now - currentTask->startTime;
+        currentTask->responseTime += responseTime;  // Accumulate response time
+        if (responseTime > currentTask->maxResponseTime) {
+            currentTask->maxResponseTime = responseTime;  // Update max response time
+        }
+        if (now > currentTask->xAbsoluteDeadline) {
+            currentTask->deadlineMisses++;  // Count deadline misses
+        }
+    }
+}
+void reportIdleTick() {
+    idleTicks++;
+}
+
+void taskStart(SchedTCB_t *task) {
+    task->startTime = xTaskGetTickCount();
+}
+
+void taskComplete(SchedTCB_t *task) {
+    uint32_t now = xTaskGetTickCount();
+    uint32_t responseTime = now - task->startTime;
+    task->responseTime += responseTime;
+    Serial.print("Task "); Serial.print(task->pcName); Serial.println(" Completed.");
+    Serial.print("   Current Response Time: "); Serial.println(responseTime);
+    Serial.print("   Accumulated Response Time: "); Serial.println(task->responseTime);
+
+    if (now > task->xAbsoluteDeadline) {
+        task->deadlineMisses++;
+        Serial.print("   Deadline Missed! Total Misses: "); Serial.println(task->deadlineMisses);
+    }
+
+    if (responseTime > task->maxResponseTime) {
+        task->maxResponseTime = responseTime;
+        Serial.print("   New Worst Case Response Time: "); Serial.println(task->maxResponseTime);
+    }
+}
+
+void initializePerformanceMetrics() {
+	#if( schedUSE_TCB_ARRAY == 1 )
+		memset(xTCBArray, 0, sizeof(xTCBArray));
+	#elif( schedUSE_TCB_SORTED_LIST == 1 )
+		//
+	#endif
+    Serial.println("Performance Metrics Initialized");
+}
+
+void printMetrics() {
+    Serial.println("Performance Metrics:");
+    Serial.print("Total Context Switches: "); Serial.println(contextSwitchCount);
+    Serial.print("CPU Load: "); Serial.print(100.0 * (totalTicks - idleTicks) / totalTicks); Serial.println("%");
+
+    #if (schedUSE_TCB_ARRAY == 1)
+        for (int i = 0; i < schedMAX_NUMBER_OF_PERIODIC_TASKS; i++) {
+            if (xTCBArray[i].xInUse) {
+                Serial.print("Task "); Serial.print(xTCBArray[i].pcName); Serial.println(" Metrics:");
+                Serial.print("   Total Response Time: "); Serial.println(xTCBArray[i].responseTime);
+                Serial.print("   Deadline Misses: "); Serial.println(xTCBArray[i].deadlineMisses);
+                Serial.print("   Worst Case Response Time: "); Serial.println(xTCBArray[i].maxResponseTime);
+            }
+        }
+    #elif (schedUSE_TCB_SORTED_LIST == 1)
+		#if( schedEDF_NAIVE == 1 )
+			List_t *pxList= &xTCBList;
+		#else
+			List_t *pxList= &xTCBListAll;
+			
+		#endif
+
+        // List_t *pxList = (schedEDF_NAIVE == 1) ? &xTCBList : &xTCBListAll;
+        const ListItem_t *pxTCBListEndMarker = listGET_END_MARKER(pxList);
+        ListItem_t *pxTCBListItem = listGET_HEAD_ENTRY(pxList);
+
+        int i = 0;
+        while (pxTCBListItem != pxTCBListEndMarker) {
+            SchedTCB_t *pxTCB = listGET_LIST_ITEM_OWNER(pxTCBListItem);
+            Serial.print("Task "); Serial.print(i); Serial.println(" Metrics:");
+            Serial.print("   Total Response Time: "); Serial.println(pxTCB->responseTime);
+            Serial.print("   Deadline Misses: "); Serial.println(pxTCB->deadlineMisses);
+            Serial.print("   Worst Case Response Time: "); Serial.println(pxTCB->maxResponseTime);
+            i++;
+            pxTCBListItem = listGET_NEXT(pxTCBListItem);
+        }
+    #endif
+}
 /* This function must be called before any other function call from this module. */
 void vSchedulerInit( void )
 {
@@ -1164,9 +1238,6 @@ void vSchedulerInit( void )
 void vSchedulerStart( void )
 {  Serial.println("Scheduler started.");
 	totalTicks = 0;
-	#if( schedUSE_POLLING_SERVER == 1 )
-		prvPollingServerCreate();
-	#endif /* schedUSE_POLLING_SERVER */
 
 	#if( schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_RMS || schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_DMS )
 		Serial.println("inside RMS.");

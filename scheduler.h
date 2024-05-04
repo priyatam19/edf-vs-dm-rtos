@@ -19,7 +19,7 @@
 #include <event_groups.h>
 #include <queue.h>
 #include <Arduino.h>
-#include <PerformanceMetrics.h>
+// #include <PerformanceMetrics.h>
 
 
 #ifdef __cplusplus
@@ -34,7 +34,7 @@ extern "C" {
 extern uint8_t schedSchedulingPolicy;      /* Currently active scheduling policy */
 
 // /* Configure scheduling policy by setting this define to the appropriate one. */
-#define schedSCHEDULING_POLICY schedSCHEDULING_POLICY_RMS//schedSCHEDULING_POLICY_RMS
+#define schedSCHEDULING_POLICY schedSCHEDULING_POLICY_EDF//schedSCHEDULING_POLICY_RMS
 
 /* Maximum number of periodic tasks that can be created. (Scheduler task is
  * not included) */
@@ -93,6 +93,9 @@ void vSchedulerPeriodicTaskDelete( TaskHandle_t xTaskHandle );
 
 /* Starts scheduling tasks. */
 void vSchedulerStart( void );
+
+
+void intializePerformanceMetrics();
 
 #ifdef __cplusplus
 }

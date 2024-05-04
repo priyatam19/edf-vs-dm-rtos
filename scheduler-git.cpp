@@ -21,7 +21,6 @@
 // */
 
 // #include "scheduler.h"
-// #include "PerformanceMetrics.h"
 
 // // uint8_t schedSchedulingPolicy = schedSCHEDULING_POLICY_RMS;
 
@@ -64,12 +63,7 @@
 
 // 	BaseType_t xWorkIsDone; 		/* pdFALSE if the job is not finished, pdTRUE if the job is finished. */
 
-// 	uint32_t responseTime;			/* Response time of the task. */
-//     uint32_t startTime;				/* Start time of the task. */
-//     uint32_t deadlineMisses;		/* Number of deadline misses. */
-//     uint32_t maxResponseTime;		/* Maximum response time of the task. */
-
-// 	#if( schedUSE_TCB_ARRAY == 1 )
+// 		#if( schedUSE_TCB_ARRAY == 1 )
 // 		BaseType_t xPriorityIsSet; 	/* pdTRUE if the priority is assigned. */
 // 		BaseType_t xInUse; 			/* pdFALSE if this extended TCB is empty. */
 // 	#elif( schedUSE_TCB_SORTED_LIST == 1 )
@@ -628,42 +622,6 @@
 // 	}
 // }
 
-// /*Performance Metrics*/
-// extern "C" void externTaskSwitchedIn() {
-//     SchedTCB_t* currentTask = (SchedTCB_t*) pvTaskGetThreadLocalStoragePointer(xTaskGetCurrentTaskHandle(), schedTHREAD_LOCAL_STORAGE_POINTER_INDEX);
-//     if (currentTask) {
-//         currentTask->startTime = xTaskGetTickCount();  // Capture start time
-//     }
-// }
-
-// extern "C" void externTaskSwitchedOut() {
-//     SchedTCB_t* currentTask = (SchedTCB_t*) pvTaskGetThreadLocalStoragePointer(xTaskGetCurrentTaskHandle(), schedTHREAD_LOCAL_STORAGE_POINTER_INDEX);
-//     if (currentTask) {
-//         uint32_t now = xTaskGetTickCount();
-//         uint32_t responseTime = now - currentTask->startTime;
-//         currentTask->responseTime += responseTime;  // Accumulate response time
-//         if (responseTime > currentTask->maxResponseTime) {
-//             currentTask->maxResponseTime = responseTime;  // Update max response time
-//         }
-//         if (now > currentTask->xAbsoluteDeadline) {
-//             currentTask->deadlineMisses++;  // Count deadline misses
-//         }
-//     }
-// }
-
-// void printMetrics() {
-//     Serial.println("Performance Metrics:");
-//     for (int i = 0; i < schedMAX_NUMBER_OF_PERIODIC_TASKS; i++) {
-//         if (xTCBArray[i].xInUse) {
-//             Serial.print("Task "); Serial.print(i); Serial.println(" Metrics:");
-//             Serial.print("   Total Response Time: "); Serial.println(xTCBArray[i].responseTime);
-//             Serial.print("   Deadline Misses: "); Serial.println(xTCBArray[i].deadlineMisses);
-//             Serial.print("   Worst Case Response Time: "); Serial.println(xTCBArray[i].maxResponseTime);
-//         }
-//     }
-// }/*Performance Metrics*/
-
-
 // /* Creates a periodic task. */
 // void vSchedulerPeriodicTaskCreate( TaskFunction_t pvTaskCode, const char *pcName, UBaseType_t uxStackDepth, void *pvParameters, UBaseType_t uxPriority,
 // 		TaskHandle_t *pxCreatedTask, TickType_t xPhaseTick, TickType_t xPeriodTick, TickType_t xMaxExecTimeTick, TickType_t xDeadlineTick )
@@ -696,12 +654,7 @@
 // 	pxNewTCB->xExecTime = 0;
 // 	pxNewTCB->xWorkIsDone = pdTRUE;
 
-// 	pxNewTCB->responseTime = 0;
-//     pxNewTCB->startTime = 0;
-//     pxNewTCB->deadlineMisses = 0;
-//     pxNewTCB->maxResponseTime = 0;
-
-// 	// Set priorities and deadlines based on the current scheduling policy
+// 		// Set priorities and deadlines based on the current scheduling policy
 //     switch (schedSCHEDULING_POLICY) {
 //         case schedSCHEDULING_POLICY_RMS:
 // 			// pxNewTCB->xPriorityIsSet = pdTRUE;
@@ -1437,8 +1390,7 @@
 // 	{
 
 // 		totalTicks++;
-// 		// Serial.print("totalTicks: ");
-// 		// Serial.println( totalTicks);
+		
 // 		SchedTCB_t *pxCurrentTask;
 // 		TaskHandle_t xCurrentTaskHandle = xTaskGetCurrentTaskHandle();
 
@@ -1506,7 +1458,7 @@
 //  * have been created with API function before calling this function. */
 // void vSchedulerStart( void )
 // {  Serial.println("Scheduler started.");
-// 	totalTicks = 0;
+	
 // 	#if( schedUSE_POLLING_SERVER == 1 )
 // 		prvPollingServerCreate();
 // 	#endif /* schedUSE_POLLING_SERVER */
