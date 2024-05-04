@@ -135,7 +135,7 @@ static void prvCreateAllTasks( void );
 	static void prvSchedulerFunction( void );
 	static void prvCreateSchedulerTask( void );
 	static void prvWakeScheduler( void );
-
+    
 	#if( schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1 )
 		static void prvPeriodicTaskRecreate( SchedTCB_t *pxTCB );
 		static void prvDeadlineMissedHook( SchedTCB_t *pxTCB, TickType_t xTickCount );
