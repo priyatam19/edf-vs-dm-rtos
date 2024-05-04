@@ -31,6 +31,10 @@ extern "C" {
 #define schedSCHEDULING_POLICY_EDF 2        /* Earliest Deadline First scheduling */
 #define schedSCHEDULING_POLICY_DM 3         /* Deadline Monotonic scheduling */
 
+// Define scheduling strategies
+#define schedEDF_NAIVE 0
+#define schedEDF_EFFICIENT 1
+
 extern uint8_t schedSchedulingPolicy;      /* Currently active scheduling policy */
 
 // /* Configure scheduling policy by setting this define to the appropriate one. */
@@ -95,7 +99,8 @@ void vSchedulerPeriodicTaskDelete( TaskHandle_t xTaskHandle );
 void vSchedulerStart( void );
 
 
-void intializePerformanceMetrics();
+void initializePerformanceMetrics();
+void printMetrics();
 
 #ifdef __cplusplus
 }

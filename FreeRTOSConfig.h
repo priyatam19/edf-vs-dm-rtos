@@ -72,10 +72,6 @@
 #define configSUPPORT_DYNAMIC_ALLOCATION    1
 #define configSUPPORT_STATIC_ALLOCATION     0
 
-// Define scheduling strategies
-#define schedEDF_NAIVE 0
-#define schedEDF_EFFICIENT 1
-
 /* Timer definitions. */
 #define configUSE_TIMERS                    1
 #define configTIMER_TASK_PRIORITY           ( ( UBaseType_t ) 3 )

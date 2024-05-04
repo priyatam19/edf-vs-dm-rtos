@@ -63,7 +63,7 @@
 
 // 	BaseType_t xWorkIsDone; 		/* pdFALSE if the job is not finished, pdTRUE if the job is finished. */
 
-// 		#if( schedUSE_TCB_ARRAY == 1 )
+// 	#if( schedUSE_TCB_ARRAY == 1 )
 // 		BaseType_t xPriorityIsSet; 	/* pdTRUE if the priority is assigned. */
 // 		BaseType_t xInUse; 			/* pdFALSE if this extended TCB is empty. */
 // 	#elif( schedUSE_TCB_SORTED_LIST == 1 )
@@ -997,9 +997,10 @@
 // 		/* Need to reset lastWakeTime for correct release. */
 // 		pxTCB->xLastWakeTime = 0;
 // 		pxTCB->xAbsoluteDeadline = pxTCB->xRelativeDeadline + pxTCB->xReleaseTime;
-// 		#if( schedEDF_EFFICIENT == 1 )
-// 			listSET_LIST_ITEM_VALUE( &pxTCB->xTCBListItem, pxTCB->xAbsoluteDeadline );
-// 		#endif /* schedEDF_EFFICIENT */
+//             #if( schedEDF_EFFICIENT == 1 )
+//                 listSET_LIST_ITEM_VALUE( &pxTCB->xTCBListItem, pxTCB->xAbsoluteDeadline );
+//             #endif /* schedEDF_EFFICIENT */
+
 // 	}
 
 // 	/* Checks whether given task has missed deadline or not. */
