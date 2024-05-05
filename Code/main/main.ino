@@ -44,7 +44,7 @@ static void testFunc1( void *pvParameters )
   (void) pvParameters;
     TickType_t Task1_start;
 
-  for(int i=0; i<1; i++){
+  for(int i=0; i<5; i++){
     TickType_t Task1_start = xTaskGetTickCount() *16 ;
     Serial.println("task 1 running");
     // Serial.println(Task1_start); // Convert milliseconds 
@@ -57,7 +57,7 @@ static void testFunc2( void *pvParameters )
   (void) pvParameters;
     TickType_t Task2_start;
 
-  for(int i=0; i<10; i++){
+  for(int i=0; i<11; i++){
     TickType_t Task2_start = xTaskGetTickCount() *16 ;
     Serial.println("task 2 running ");
     // Serial.println(Task2_start); // Convert milliseconds 
@@ -68,7 +68,7 @@ static void testFunc3( void *pvParameters )
 { 
   (void) pvParameters;
   TickType_t Task3_start;
-  for(int i=0; i<3; i++){
+  for(int i=0; i<11; i++){
   TickType_t Task3_start = xTaskGetTickCount() *16;
   Serial.println("task 3 running ");
     // Serial.println(Task3_start); // Convert milliseconds 
@@ -79,7 +79,7 @@ static void testFunc4( void *pvParameters )
 { 
   (void) pvParameters;
   TickType_t Task4_start; 
-  for(int i=0; i<11; i++){
+  for(int i=0; i<5; i++){
     TickType_t Task4_start = xTaskGetTickCount() *16;
     Serial.println("task 4 running ");
     // Serial.println(Task4_start); // Convert milliseconds 
@@ -107,10 +107,10 @@ void setup()
   initializePerformanceMetrics();
   Serial.println("System Initialized.");
 
-  vSchedulerPeriodicTaskCreate(testFunc1, "t1", configMINIMAL_STACK_SIZE, &c1, 4, &xHandle1, pdMS_TO_TICKS(0), pdMS_TO_TICKS(80), pdMS_TO_TICKS(10), pdMS_TO_TICKS(80));
-  vSchedulerPeriodicTaskCreate(testFunc2, "t2", configMINIMAL_STACK_SIZE, &c2, 3, &xHandle2, pdMS_TO_TICKS(0), pdMS_TO_TICKS(160), pdMS_TO_TICKS(20), pdMS_TO_TICKS(160));
-  vSchedulerPeriodicTaskCreate(testFunc3, "t3", configMINIMAL_STACK_SIZE, &c3, 1, &xHandle3, pdMS_TO_TICKS(0), pdMS_TO_TICKS(400), pdMS_TO_TICKS(50), pdMS_TO_TICKS(400));
-  vSchedulerPeriodicTaskCreate(testFunc4, "t4", configMINIMAL_STACK_SIZE, &c4, 2, &xHandle4, pdMS_TO_TICKS(0), pdMS_TO_TICKS(800), pdMS_TO_TICKS(100), pdMS_TO_TICKS(800));
+  vSchedulerPeriodicTaskCreate(testFunc1, "t1", configMINIMAL_STACK_SIZE, &c1, 4, &xHandle1, pdMS_TO_TICKS(0), pdMS_TO_TICKS(800), pdMS_TO_TICKS(100), pdMS_TO_TICKS(800));
+  vSchedulerPeriodicTaskCreate(testFunc2, "t2", configMINIMAL_STACK_SIZE, &c2, 3, &xHandle2, pdMS_TO_TICKS(0), pdMS_TO_TICKS(1000), pdMS_TO_TICKS(200), pdMS_TO_TICKS(1000));
+  vSchedulerPeriodicTaskCreate(testFunc3, "t3", configMINIMAL_STACK_SIZE, &c3, 1, &xHandle3, pdMS_TO_TICKS(0), pdMS_TO_TICKS(1500), pdMS_TO_TICKS(200), pdMS_TO_TICKS(1500));
+  vSchedulerPeriodicTaskCreate(testFunc4, "t4", configMINIMAL_STACK_SIZE, &c4, 2, &xHandle4, pdMS_TO_TICKS(0), pdMS_TO_TICKS(2000), pdMS_TO_TICKS(100), pdMS_TO_TICKS(2000));
   
   
 
