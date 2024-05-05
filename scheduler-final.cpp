@@ -44,16 +44,6 @@ static uint32_t contextSwitchCount = 0;
 static uint32_t idleTicks = 0;
 static uint32_t totalTicks = 0;
 
-// void taskStart(SchedTCB_t *task);
-// void taskComplete(SchedTCB_t *task);
-
-
-
-
-
-
-
-
 
 /* Extended Task control block for managing periodic tasks within this library. */
 typedef struct xExtended_TCB
@@ -74,8 +64,8 @@ typedef struct xExtended_TCB
 
 	BaseType_t xWorkIsDone; 		/* pdFALSE if the job is not finished, pdTRUE if the job is finished. */
 
-	uint32_t responseTime;			/* Response time of the task. */
-    uint32_t startTime;				/* Start time of the task. */
+	TickType_t responseTime;			/* Response time of the task. */
+    TickType_t startTime;				/* Start time of the task. */
     uint32_t deadlineMisses;		/* Number of deadline misses. */
     uint32_t maxResponseTime;		/* Maximum response time of the task. */
 
@@ -105,7 +95,8 @@ typedef struct xExtended_TCB
 } SchedTCB_t;
 
 
-
+// static void taskStart(SchedTCB_t *task);
+// static void taskComplete(SchedTCB_t *task);
 
 
 #if( schedUSE_TCB_ARRAY == 1 )
@@ -505,12 +496,23 @@ static void prvPeriodicTaskCode( void *pvParameters )
 			#endif /* schedEDF_NAIVE */
 		#endif /* schedSCHEDULING_POLICY_EDF */
 		pxThisTask->xWorkIsDone = pdFALSE;
+        Serial.print("Task ");
+        Serial.print(pxThisTask->pcName);
+        Serial.print(" begin at Tickcount: ");
+        Serial.println(xTaskGetTickCount());
+		// taskStart(pxThisTask);
+		
 
 		/* Execute the task function specified by the user. */
 		pxThisTask->pvTaskCode( pvParameters );
 
 		pxThisTask->xWorkIsDone = pdTRUE;
 
+		//taskComplete(pxThisTask);
+        Serial.print("Task ");
+        Serial.print(pxThisTask->pcName);
+        Serial.print(" end at Tickcount: ");
+        Serial.println(xTaskGetTickCount());
 
 		pxThisTask->xExecTime = 0;
 
@@ -811,8 +813,8 @@ SchedTCB_t *pxShortestTaskPointer, *pxTCB;
 	 * The periodic task is released during next period. */
 	static void prvDeadlineMissedHook( SchedTCB_t *pxTCB, TickType_t xTickCount )
 	{
-		printf( "\r\ndeadline missed! %s tick %d\r\n", pxTCB->pcName, xTickCount );
-
+		//printf( "\r\ndeadline missed! %s tick %d\r\n", pxTCB->pcName, xTickCount );
+        pxTCB->deadlineMisses++;
 		/* Delete the pxTask and recreate it. */
 		vTaskDelete( *pxTCB->pxTaskHandle );
 		pxTCB->xExecTime = 0;
@@ -855,8 +857,8 @@ SchedTCB_t *pxShortestTaskPointer, *pxTCB;
 	 * the scheduler task occur to block the periodic task. */
 	static void prvExecTimeExceedHook( TickType_t xTickCount, SchedTCB_t *pxCurrentTask )
 	{
-		printf( "\r\nworst case execution time exceeded! %s %d %d\r\n", pxCurrentTask->pcName, pxCurrentTask->xExecTime, xTickCount );
-
+		//Serial.print( "\r\nworst case execution time exceeded! %s %d %d\r\n", pxCurrentTask->pcName, pxCurrentTask->xExecTime, xTickCount );
+        pxCurrentTask->maxResponseTime++;
 		pxCurrentTask->xMaxExecTimeExceeded = pdTRUE;
 		/* Is not suspended yet, but will be suspended by the scheduler later. */
 		pxCurrentTask->xSuspended = pdTRUE;
@@ -1111,7 +1113,7 @@ SchedTCB_t *pxShortestTaskPointer, *pxTCB;
 
 
 
-extern "C" void externTaskSwitchedIn() {
+void externTaskSwitchedIn() {
     contextSwitchCount++;
     SchedTCB_t* currentTask = (SchedTCB_t*) pvTaskGetThreadLocalStoragePointer(xTaskGetCurrentTaskHandle(), schedTHREAD_LOCAL_STORAGE_POINTER_INDEX);
     if (currentTask) {
@@ -1119,11 +1121,11 @@ extern "C" void externTaskSwitchedIn() {
     }
 }
 
-extern "C" void externTaskSwitchedOut() {
+void externTaskSwitchedOut() {
     SchedTCB_t* currentTask = (SchedTCB_t*) pvTaskGetThreadLocalStoragePointer(xTaskGetCurrentTaskHandle(), schedTHREAD_LOCAL_STORAGE_POINTER_INDEX);
     if (currentTask) {
-        uint32_t now = xTaskGetTickCount();
-        uint32_t responseTime = now - currentTask->startTime;
+        TickType_t now = xTaskGetTickCount();
+        TickType_t responseTime = now - currentTask->startTime;
         currentTask->responseTime += responseTime;  // Accumulate response time
         if (responseTime > currentTask->maxResponseTime) {
             currentTask->maxResponseTime = responseTime;  // Update max response time
@@ -1137,28 +1139,28 @@ void reportIdleTick() {
     idleTicks++;
 }
 
-void taskStart(SchedTCB_t *task) {
-    task->startTime = xTaskGetTickCount();
-}
+// static void taskStart(SchedTCB_t *task) {
+//     task->startTime = xTaskGetTickCount();
+// }
 
-void taskComplete(SchedTCB_t *task) {
-    uint32_t now = xTaskGetTickCount();
-    uint32_t responseTime = now - task->startTime;
-    task->responseTime += responseTime;
-    Serial.print("Task "); Serial.print(task->pcName); Serial.println(" Completed.");
-    Serial.print("   Current Response Time: "); Serial.println(responseTime);
-    Serial.print("   Accumulated Response Time: "); Serial.println(task->responseTime);
+// static void taskComplete(SchedTCB_t *task) {
+//     uint32_t now = xTaskGetTickCount();
+//     uint32_t responseTime = now - task->startTime;
+//     task->responseTime += responseTime;
+//     Serial.print("Task "); Serial.print(task->pcName); Serial.println(" Completed.");
+//     Serial.print("   Current Response Time: "); Serial.println(responseTime);
+//     Serial.print("   Accumulated Response Time: "); Serial.println(task->responseTime);
 
-    if (now > task->xAbsoluteDeadline) {
-        task->deadlineMisses++;
-        Serial.print("   Deadline Missed! Total Misses: "); Serial.println(task->deadlineMisses);
-    }
+//     if (now > task->xAbsoluteDeadline) {
+//         task->deadlineMisses++;
+//         Serial.print("   Deadline Missed! Total Misses: "); Serial.println(task->deadlineMisses);
+//     }
 
-    if (responseTime > task->maxResponseTime) {
-        task->maxResponseTime = responseTime;
-        Serial.print("   New Worst Case Response Time: "); Serial.println(task->maxResponseTime);
-    }
-}
+//     if (responseTime > task->maxResponseTime) {
+//         task->maxResponseTime = responseTime;
+//         Serial.print("   New Worst Case Response Time: "); Serial.println(task->maxResponseTime);
+//     }
+// }
 
 void initializePerformanceMetrics() {
 	#if( schedUSE_TCB_ARRAY == 1 )
@@ -1171,16 +1173,16 @@ void initializePerformanceMetrics() {
 
 void printMetrics() {
     Serial.println("Performance Metrics:");
-    Serial.print("Total Context Switches: "); Serial.println(contextSwitchCount);
-    Serial.print("CPU Load: "); Serial.print(100.0 * (totalTicks - idleTicks) / totalTicks); Serial.println("%");
+    //Serial.print("Total Context Switches: "); Serial.println(contextSwitchCount);
+    //Serial.print("CPU Load: "); Serial.print(100.0 * (totalTicks - idleTicks) / totalTicks); Serial.println("%");
 
     #if (schedUSE_TCB_ARRAY == 1)
         for (int i = 0; i < schedMAX_NUMBER_OF_PERIODIC_TASKS; i++) {
             if (xTCBArray[i].xInUse) {
                 Serial.print("Task "); Serial.print(xTCBArray[i].pcName); Serial.println(" Metrics:");
-                Serial.print("   Total Response Time: "); Serial.println(xTCBArray[i].responseTime);
+               // Serial.print("   Total Response Time: "); Serial.println(xTCBArray[i].responseTime);
                 Serial.print("   Deadline Misses: "); Serial.println(xTCBArray[i].deadlineMisses);
-                Serial.print("   Worst Case Response Time: "); Serial.println(xTCBArray[i].maxResponseTime);
+                Serial.print("   Worst Case Response Time Exceeded: "); Serial.println(xTCBArray[i].maxResponseTime);
             }
         }
     #elif (schedUSE_TCB_SORTED_LIST == 1)
@@ -1198,10 +1200,10 @@ void printMetrics() {
         int i = 0;
         while (pxTCBListItem != pxTCBListEndMarker) {
             SchedTCB_t *pxTCB = listGET_LIST_ITEM_OWNER(pxTCBListItem);
-            Serial.print("Task "); Serial.print(i); Serial.println(" Metrics:");
-            Serial.print("   Total Response Time: "); Serial.println(pxTCB->responseTime);
+            Serial.print("Task "); Serial.print(pxTCB->pcName); Serial.println(" Metrics:");
+            //Serial.print("   Total Response Time: "); Serial.println(pxTCB->responseTime);
             Serial.print("   Deadline Misses: "); Serial.println(pxTCB->deadlineMisses);
-            Serial.print("   Worst Case Response Time: "); Serial.println(pxTCB->maxResponseTime);
+            Serial.print("   Worst Case Response Time Exceeded: "); Serial.println(pxTCB->maxResponseTime);
             i++;
             pxTCBListItem = listGET_NEXT(pxTCBListItem);
         }
