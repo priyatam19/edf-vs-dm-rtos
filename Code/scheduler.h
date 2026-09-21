@@ -20,29 +20,38 @@
 #include <queue.h>
 #include <Arduino.h>
 // #include <PerformanceMetrics.h>
+#include "schedPolicy.h"
 
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* The scheduling policy can be chosen from one of these. */
-#define schedSCHEDULING_POLICY_RMS 1        /* Rate-monotonic scheduling */
-#define schedSCHEDULING_POLICY_EDF 2        /* Earliest Deadline First scheduling */
-#define schedSCHEDULING_POLICY_DM 3         /* Deadline Monotonic scheduling */
-
-// Define scheduling strategies
-#define schedEDF_NAIVE 0
-#define schedEDF_EFFICIENT 1
+/* Scheduling policy selection (schedSCHEDULING_POLICY_{MANUAL,RMS,DMS,EDF},
+ * schedEDF_NAIVE/schedEDF_EFFICIENT) lives in schedPolicy.h so that
+ * FreeRTOSConfig.h can size configMAX_PRIORITIES and the efficient-EDF trace
+ * macros from the same definitions -- see that file for the full rationale.
+ * Override schedSCHEDULING_POLICY there or via a build flag; don't redefine
+ * it here. */
 
 extern uint8_t schedSchedulingPolicy;      /* Currently active scheduling policy */
 
-// /* Configure scheduling policy by setting this define to the appropriate one. */
-#define schedSCHEDULING_POLICY schedSCHEDULING_POLICY_EDF //schedSCHEDULING_POLICY_RMS
-
 /* Maximum number of periodic tasks that can be created. (Scheduler task is
- * not included) */
+ * not included) Must be >= schedACTIVE_NUMBER_OF_PERIODIC_TASKS (schedPolicy.h). */
 #define schedMAX_NUMBER_OF_PERIODIC_TASKS 5
+
+#if( schedACTIVE_NUMBER_OF_PERIODIC_TASKS > schedMAX_NUMBER_OF_PERIODIC_TASKS )
+    #error "schedACTIVE_NUMBER_OF_PERIODIC_TASKS exceeds schedMAX_NUMBER_OF_PERIODIC_TASKS"
+#endif
+
+#if( schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_EDF && schedEDF_EFFICIENT == 1 )
+    /* Functions that must be wired to trace macros for efficient EDF to
+     * work -- defined in scheduler-final.cpp, wired in FreeRTOSConfig.h.
+     * See FreeRTOSConfig.h for which trace macro drives which function. */
+    void vSchedulerBlockTrace( void );
+    void vSchedulerSuspendTrace( TaskHandle_t xTaskHandle );
+    void vSchedulerReadyTrace( TaskHandle_t xTaskHandle );
+#endif /* efficient EDF */
 
 /* Set this define to 1 to enable Timing-Error-Detection for detecting tasks
  * that have missed their deadlines. Tasks that have missed their deadlines
@@ -101,6 +110,10 @@ void vSchedulerStart( void );
 
 void initializePerformanceMetrics();
 void printMetrics();
+
+/* Dumps the buffered trace-event log (job release/completion/deadline-miss/
+ * overrun events) as CSV -- also called once at the end of printMetrics(). */
+void dumpTraceCSV();
 
 #ifdef __cplusplus
 }

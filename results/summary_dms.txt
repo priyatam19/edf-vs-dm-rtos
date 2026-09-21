@@ -1,0 +1,5 @@
+# policy,dms
+# priorities,{'cA': 2, 'cB': 1, 'cC': 0}
+# cA,deadline_misses=0,worst_response_ms=40,jobs=10
+# cB,deadline_misses=0,worst_response_ms=80,jobs=20
+# cC,deadline_misses=0,worst_response_ms=130,jobs=12

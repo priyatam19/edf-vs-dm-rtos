@@ -1,0 +1,53 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  avr-configs:
+    name: Build all four scheduling configurations (AVR, compile-only)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [rms, dms, edf_naive, edf_efficient, dms_constrained]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: pip install platformio
+      - run: pio run -e ${{ matrix.env }}
+
+  native-tests:
+    name: Host-side unit tests (no board required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: pip install platformio
+      - run: pio test -e native
+
+  simulate:
+    name: Regenerate the RM-vs-DM simulated result
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - run: pip install matplotlib
+      - run: |
+          mkdir -p results
+          python3 host/sim/simulate.py tasksets/constrained_deadline.json rms > results/trace_rms.csv
+          python3 host/sim/simulate.py tasksets/constrained_deadline.json dms > results/trace_dms.csv
+          python3 host/sim/plot_results.py results/trace_rms.csv rms results/trace_dms.csv dms \
+            --deadlines tasksets/constrained_deadline.json \
+            --out results/rm_vs_dm_constrained_deadline.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: simulated-result
+          path: results/

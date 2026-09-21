@@ -28,6 +28,7 @@
 #define FREERTOS_CONFIG_H
 
 #include <avr/io.h>
+#include "schedPolicy.h"
 
 /*-----------------------------------------------------------
  * Application specific definitions.
@@ -51,7 +52,20 @@
 
 #define configUSE_TICK_HOOK                 1
 #define configCPU_CLOCK_HZ                  ( ( uint32_t ) F_CPU )          // This F_CPU variable set by the environment
-#define configMAX_PRIORITIES                4
+
+/* Number of priority levels, sized from the active scheduling policy and
+ * task count (schedPolicy.h) per upstream ESFree's own configuration rule
+ * (thesis sec. 4.2.2): periodic tasks + 1 for RMS/DMS/naive EDF so every
+ * task can get a distinct fixed priority below the scheduler task; a fixed
+ * 3 for efficient EDF, which only ever uses "running"/"not running"/idle.
+ * This is what fixes the priority underflow (tasks assigned priority -1)
+ * that a fixed configMAX_PRIORITIES==4 caused with 4 periodic tasks. */
+#if( schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_EDF && schedEDF_EFFICIENT == 1 )
+    #define configMAX_PRIORITIES ( 3 )
+#else
+    #define configMAX_PRIORITIES ( schedACTIVE_NUMBER_OF_PERIODIC_TASKS + 1 )
+#endif
+
 #define configIDLE_SHOULD_YIELD             1
 #define configMINIMAL_STACK_SIZE            ( 192 )
 #define configMAX_TASK_NAME_LEN             ( 8 )
@@ -88,6 +102,14 @@
 /* Set the stack pointer type to be uint16_t, otherwise it defaults to unsigned long */
 #define portPOINTER_SIZE_TYPE               uint16_t
 
+/* ESFree stores a pointer to its own per-task bookkeeping struct (SchedTCB_t)
+ * in TLS slot schedTHREAD_LOCAL_STORAGE_POINTER_INDEX (0, see
+ * scheduler-final.cpp). Without this define the TCB's TLS array is sized 0
+ * (see Arduino_FreeRTOS.h's own fallback default), so writing to slot 0
+ * corrupts adjacent TCB memory instead of erroring -- this is required, not
+ * optional, for every scheduling policy, not just efficient EDF. */
+#define configNUM_THREAD_LOCAL_STORAGE_POINTERS 1
+
 /* Set the following definitions to 1 to include the API function, or zero
 to exclude the API function. */
 
@@ -99,10 +121,61 @@ to exclude the API function. */
 #define INCLUDE_vResumeFromISR                  1
 #define INCLUDE_xTaskDelayUntil                 1
 #define INCLUDE_vTaskDelay                      1
-#define INCLUDE_xTaskGetSchedulerState          0
+/* Efficient EDF's vSchedulerReadyTrace() calls xTaskGetSchedulerState().
+ * configUSE_TIMERS==1 already pulls that function in regardless of this
+ * define (see task.h), but efficient EDF depends on it directly, so it's
+ * set explicitly rather than relying on that as a side effect. */
+#define INCLUDE_xTaskGetSchedulerState          1
 #define INCLUDE_xTaskGetIdleTaskHandle          1 // create an idle task handle.
 #define INCLUDE_xTaskGetCurrentTaskHandle       1
 #define INCLUDE_uxTaskGetStackHighWaterMark     1
+/* Efficient EDF's vSchedulerReadyTrace() also calls
+ * xTimerGetTimerDaemonTaskHandle() (see timers.c); documented as required
+ * by upstream ESFree's own configuration guide. */
+#define INCLUDE_xTimerGetTimerDaemonTaskHandle  1
+
+#if( schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_EDF && schedEDF_EFFICIENT == 1 )
+    /*
+     * Efficient EDF keeps every non-running ready task at schedPRIORITY_NOT_RUNNING
+     * and only raises the head of the ready list to schedPRIORITY_RUNNING, so it
+     * depends on the kernel telling it about state transitions via trace macros
+     * instead of doing bookkeeping on every tick. Wiring per upstream ESFree's
+     * documented configuration (github.com/RobinK2/ESFree master's thesis,
+     * "FreeRTOS Configurations for Efficient EDF"), verified against this
+     * project's pinned kernel (feilipu/Arduino_FreeRTOS_Library @ 10.4.3-8,
+     * src/tasks.c and src/queue.c) for exact macro arity.
+     *
+     * The three vScheduler*Trace hook functions are defined in
+     * scheduler-final.cpp and declared in scheduler.h. They're also
+     * forward-declared here because FreeRTOSConfig.h is processed (from
+     * Arduino_FreeRTOS.h) before task.h defines TaskHandle_t, and these
+     * macros are expanded from inside the kernel's own .c files, which never
+     * see scheduler.h at all. The forward declaration below spells
+     * TaskHandle_t exactly as task.h itself does
+     * (`typedef struct TaskControlBlock_t * TaskHandle_t;`), so when task.h
+     * is included later it's a redundant identical typedef, not a conflict
+     * -- and scheduler.h's own declarations (seen together with these in
+     * scheduler-final.cpp/main.ino) match type-for-type instead of colliding
+     * over TaskHandle_t vs. void*.
+     */
+    #ifdef __cplusplus
+    extern "C" {
+    #endif
+    struct TaskControlBlock_t;
+    typedef struct TaskControlBlock_t * TaskHandle_t;
+    void vSchedulerBlockTrace( void );
+    void vSchedulerSuspendTrace( TaskHandle_t xTaskHandle );
+    void vSchedulerReadyTrace( TaskHandle_t xTaskHandle );
+    #ifdef __cplusplus
+    }
+    #endif
+
+    #define traceBLOCKING_ON_QUEUE_RECEIVE( pxQueue )      vSchedulerBlockTrace()
+    #define traceBLOCKING_ON_QUEUE_SEND( pxQueue )         vSchedulerBlockTrace()
+    #define traceTASK_DELAY_UNTIL( xTimeToWake )           vSchedulerBlockTrace()
+    #define traceTASK_SUSPEND( pxTaskToSuspend )           vSchedulerSuspendTrace( pxTaskToSuspend )
+    #define traceMOVED_TASK_TO_READY_STATE( pxTCB )        vSchedulerReadyTrace( pxTCB )
+#endif /* efficient EDF */
 
 #define configMAX(a,b)  ({ __typeof__ (a) _a = (a); __typeof__ (b) _b = (b); _a > _b ? _a : _b; })
 #define configMIN(a,b)  ({ __typeof__ (a) _a = (a); __typeof__ (b) _b = (b); _a < _b ? _a : _b; })

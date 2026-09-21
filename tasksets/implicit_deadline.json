@@ -1,0 +1,11 @@
+{
+  "name": "implicit_deadline",
+  "description": "Original 4-task set: deadline == period for every task. Cannot demonstrate RM vs. DM choosing different priority orders (their fixed-priority order only depends on which of period/deadline you sort by, and here the two always agree) -- see constrained_deadline.json for that. Matches SCHED_TASKSET=0 in Code/schedPolicy.h and the vSchedulerPeriodicTaskCreate() calls in Code/main/main.ino.",
+  "scheduler_task_period_ms": 100,
+  "tasks": [
+    { "name": "t1", "phase_ms": 0, "period_ms": 800,  "deadline_ms": 800,  "budget_ms": 100 },
+    { "name": "t2", "phase_ms": 0, "period_ms": 1000, "deadline_ms": 1000, "budget_ms": 200 },
+    { "name": "t3", "phase_ms": 0, "period_ms": 1500, "deadline_ms": 1500, "budget_ms": 200 },
+    { "name": "t4", "phase_ms": 0, "period_ms": 2000, "deadline_ms": 2000, "budget_ms": 100 }
+  ]
+}

@@ -1,0 +1,10 @@
+# PlatformIO build output and downloaded toolchains/libraries.
+.pio/
+
+# Build-time staging copy made by tools/pio_overlay_freertos_config.py --
+# never hand-edit this, edit Code/scheduler-final.cpp instead.
+Code/main/scheduler-final.cpp
+
+# results/ is intentionally NOT ignored: it holds the committed "one
+# reproducible result" (README.md embeds results/rm_vs_dm_constrained_deadline.png)
+# -- regenerate it with host/sim/simulate.py + host/sim/plot_results.py.

@@ -29,6 +29,15 @@
 
 #define schedTHREAD_LOCAL_STORAGE_POINTER_INDEX 0
 
+/* Default measurement mode: jobs run silently, filling the trace buffer
+ * (dumpTraceCSV()) instead of printing at every start/end -- Serial I/O in
+ * the hot path would make UART buffering/transmission part of the measured
+ * workload. Set to 1 (e.g. -D SCHED_VERBOSE_DEMO=1) for a human-readable
+ * demo that prints each job's start/end as it happens. */
+#ifndef SCHED_VERBOSE_DEMO
+#define SCHED_VERBOSE_DEMO 0
+#endif
+
 
 #if( schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_EDF )
 	#define schedUSE_TCB_SORTED_LIST 1
@@ -43,6 +52,83 @@
 static uint32_t contextSwitchCount = 0;
 static uint32_t idleTicks = 0;
 static uint32_t totalTicks = 0;
+
+/* ---- Bounded trace-event log. -----------------------------------------
+ * Records job release/completion/deadline-miss/overrun events as they
+ * happen, cheaply (no Serial I/O in the hot path -- see SCHED_VERBOSE_DEMO
+ * below), for export as CSV once at end-of-run via dumpTraceCSV(). This is
+ * the same {tick, task, event, value} schema the host-side simulator
+ * (host/sim/) emits, so one plotting script can read either a real trace
+ * collected from hardware or a simulated one. */
+#ifndef SCHED_TRACE_BUFFER_LEN
+#define SCHED_TRACE_BUFFER_LEN 64
+#endif
+
+typedef enum
+{
+	SCHED_EVT_RELEASE = 0,
+	SCHED_EVT_COMPLETE,
+	SCHED_EVT_DEADLINE_MISS,
+	SCHED_EVT_OVERRUN
+} SchedTraceEventType_t;
+
+typedef struct
+{
+	TickType_t tick;
+	const char *pcTaskName;
+	uint8_t eventType;
+	TickType_t value; /* response time for COMPLETE; unused (0) otherwise. */
+} SchedTraceEvent_t;
+
+static SchedTraceEvent_t xTraceBuffer[ SCHED_TRACE_BUFFER_LEN ];
+static uint16_t xTraceBufferCount = 0;	/* Valid entries, saturates at SCHED_TRACE_BUFFER_LEN. */
+static uint16_t xTraceBufferHead = 0;	/* Next write index (ring). */
+static uint32_t xTraceEventsDropped = 0;	/* Events not recorded because the ring wrapped before dumpTraceCSV() was called. */
+
+static void prvTraceEvent( const char *pcTaskName, SchedTraceEventType_t xType, TickType_t xValue )
+{
+	SchedTraceEvent_t *pxSlot = &xTraceBuffer[ xTraceBufferHead ];
+	pxSlot->tick = xTaskGetTickCount();
+	pxSlot->pcTaskName = pcTaskName;
+	pxSlot->eventType = ( uint8_t ) xType;
+	pxSlot->value = xValue;
+
+	xTraceBufferHead = ( uint16_t ) ( ( xTraceBufferHead + 1 ) % SCHED_TRACE_BUFFER_LEN );
+	if( xTraceBufferCount < SCHED_TRACE_BUFFER_LEN )
+	{
+		xTraceBufferCount++;
+	}
+	else
+	{
+		xTraceEventsDropped++;
+	}
+}
+
+/* Dumps the trace buffer as CSV (tick,task,event,value), oldest first. */
+void dumpTraceCSV( void )
+{
+	static const char * const pcEventNames[] = { "RELEASE", "COMPLETE", "DEADLINE_MISS", "OVERRUN" };
+	uint16_t xStart = ( xTraceBufferCount < SCHED_TRACE_BUFFER_LEN ) ? 0 : xTraceBufferHead;
+
+	Serial.println( "tick,task,event,value" );
+	for( uint16_t i = 0; i < xTraceBufferCount; i++ )
+	{
+		uint16_t idx = ( uint16_t ) ( ( xStart + i ) % SCHED_TRACE_BUFFER_LEN );
+		SchedTraceEvent_t *pxEvt = &xTraceBuffer[ idx ];
+		Serial.print( pxEvt->tick );
+		Serial.print( "," );
+		Serial.print( pxEvt->pcTaskName );
+		Serial.print( "," );
+		Serial.print( pcEventNames[ pxEvt->eventType ] );
+		Serial.print( "," );
+		Serial.println( pxEvt->value );
+	}
+	if( xTraceEventsDropped > 0 )
+	{
+		Serial.print( "# dropped_events," );
+		Serial.println( xTraceEventsDropped );
+	}
+}
 
 
 /* Extended Task control block for managing periodic tasks within this library. */
@@ -64,10 +150,17 @@ typedef struct xExtended_TCB
 
 	BaseType_t xWorkIsDone; 		/* pdFALSE if the job is not finished, pdTRUE if the job is finished. */
 
-	TickType_t responseTime;			/* Response time of the task. */
-    TickType_t startTime;				/* Start time of the task. */
-    uint32_t deadlineMisses;		/* Number of deadline misses. */
-    uint32_t maxResponseTime;		/* Maximum response time of the task. */
+	/* ---- Measurement fields. Each is written from exactly one place so the
+	 * four metrics can never be conflated or double-counted; see the metrics
+	 * table in the root README for the precise definition of each. ---- */
+	TickType_t xLastResponseTime;	/* Most recently completed job: release -> completion, in ticks. */
+	TickType_t xMaxResponseTime;	/* Worst-case xLastResponseTime observed so far. */
+	uint32_t xResponseTimeSum;		/* Sum of every completed job's response time (for a mean). */
+	TickType_t xLastCpuExecTime;	/* Most recently completed job's actual running time (xExecTime before reset), excluding preemption/blocking. */
+	TickType_t xMaxCpuExecTime;	/* Worst-case xLastCpuExecTime observed so far. */
+	uint32_t xCompletedJobCount;	/* Number of jobs completed -- denominator for the two means above. */
+	uint32_t xExecBudgetOverruns;	/* Count: job exceeded its configured execution budget (prvExecTimeExceedHook only). */
+	uint32_t xDeadlineMisses;		/* Count: job missed its absolute deadline (prvDeadlineMissedHook only). */
 
 	#if( schedUSE_TCB_ARRAY == 1 )
 		BaseType_t xPriorityIsSet; 	/* pdTRUE if the priority is assigned. */
@@ -179,6 +272,11 @@ static void prvCreateAllTasks( void );
 		static BaseType_t xSwitchToSchedulerOnBlock = pdFALSE;		/* pdTRUE if context switch to scheduler task occur since a task is blocked. */
 		static BaseType_t xSwitchToSchedulerOnReady = pdFALSE;		/* pdTRUE if context switch to scheduler task occur since a task becomes ready. */
 	#endif /* schedEDF_NAIVE */
+	/* Counter for number of periodic tasks, mirroring xTaskCounter in the
+	 * TCB_ARRAY variant -- used by vSchedulerStart() to assert the task
+	 * count actually created matches schedACTIVE_NUMBER_OF_PERIODIC_TASKS
+	 * (schedPolicy.h), which configMAX_PRIORITIES is sized from. */
+	static BaseType_t xTaskCounter = 0;
 #endif /* schedUSE_TCB_ARRAY */
 
 #if( schedUSE_SCHEDULER_TASK )
@@ -242,7 +340,7 @@ static void prvCreateAllTasks( void );
 		configASSERT( xIndex >= 0 && xIndex < schedMAX_NUMBER_OF_PERIODIC_TASKS );
 		configASSERT( pdTRUE == xTCBArray[ xIndex ].xInUse );
 
-		if( xTCBArray[ pdTRUE == xIndex].xInUse )
+		if( xTCBArray[ xIndex ].xInUse )
 		{
 			xTCBArray[ xIndex ].xInUse = pdFALSE;
 			xTaskCounter--;
@@ -277,8 +375,9 @@ static void prvCreateAllTasks( void );
 			/* Insert TCB into list containing tasks in any state. */
 			vListInsert( pxTCBListAll, &pxTCB->xTCBAllListItem );
 		#endif /* schedEDF_EFFICIENT */
+		xTaskCounter++;
 	}
-	
+
 	/* Delete an extended TCB from sorted linked list. */
 	static void prvDeleteTCBFromList(  SchedTCB_t *pxTCB )
 	{
@@ -287,6 +386,7 @@ static void prvCreateAllTasks( void );
 		#endif /* schedEDF_EFFICIENT */
 		uxListRemove( &pxTCB->xTCBListItem );
 		vPortFree( pxTCB );
+		xTaskCounter--;
 	}
 #endif /* schedUSE_TCB_ARRAY */
 
@@ -356,7 +456,11 @@ static void prvCreateAllTasks( void );
 				while( pxTCBListItem != pxTCBListEndMarkerAfterSwap )
 				{
 					pxTCB = listGET_LIST_ITEM_OWNER( pxTCBListItem );
-					configASSERT( -1 <= xHighestPriority );
+					/* configMAX_PRIORITIES is sized from schedACTIVE_NUMBER_OF_PERIODIC_TASKS
+					 * (see FreeRTOSConfig.h); this catches the two going out of sync, which
+					 * used to underflow this priority to -1 (wrapping to a huge UBaseType_t)
+					 * with no diagnostic. */
+					configASSERT( xHighestPriority >= 0 );
 					pxTCB->uxPriority = xHighestPriority;
 					vTaskPrioritySet( *pxTCB->pxTaskHandle, pxTCB->uxPriority );
 
@@ -496,23 +600,58 @@ static void prvPeriodicTaskCode( void *pvParameters )
 			#endif /* schedEDF_NAIVE */
 		#endif /* schedSCHEDULING_POLICY_EDF */
 		pxThisTask->xWorkIsDone = pdFALSE;
-        Serial.print("Task ");
-        Serial.print(pxThisTask->pcName);
-        Serial.print(" begin at Tickcount: ");
-        Serial.println(xTaskGetTickCount());
-		// taskStart(pxThisTask);
-		
+
+		/* xLastWakeTime already holds this job's release tick: it was
+		 * advanced to it by the previous iteration's xTaskDelayUntil() (or
+		 * set to xSystemStartTime above, for the first job). */
+		TickType_t xReleaseTick = pxThisTask->xLastWakeTime;
+		prvTraceEvent( pxThisTask->pcName, SCHED_EVT_RELEASE, xReleaseTick );
+
+		#if( SCHED_VERBOSE_DEMO == 1 )
+			Serial.print("Task ");
+			Serial.print(pxThisTask->pcName);
+			Serial.print(" begin at Tickcount: ");
+			Serial.println(xTaskGetTickCount());
+		#endif /* SCHED_VERBOSE_DEMO */
 
 		/* Execute the task function specified by the user. */
 		pxThisTask->pvTaskCode( pvParameters );
 
 		pxThisTask->xWorkIsDone = pdTRUE;
 
-		//taskComplete(pxThisTask);
-        Serial.print("Task ");
-        Serial.print(pxThisTask->pcName);
-        Serial.print(" end at Tickcount: ");
-        Serial.println(xTaskGetTickCount());
+		/* Response time: release -> completion, for this job. Deliberately
+		 * measured here, once per job, rather than via switch-in/switch-out
+		 * trace hooks -- a preempted job is switched in and out several
+		 * times before it completes, so a single dispatch's duration is not
+		 * its response time. */
+		TickType_t xCompletionTick = xTaskGetTickCount();
+		TickType_t xResponseTime = ( TickType_t ) ( xCompletionTick - xReleaseTick );
+		pxThisTask->xLastResponseTime = xResponseTime;
+		pxThisTask->xResponseTimeSum += xResponseTime;
+		if( xResponseTime > pxThisTask->xMaxResponseTime )
+		{
+			pxThisTask->xMaxResponseTime = xResponseTime;
+		}
+
+		/* CPU execution time: xExecTime is incremented once per tick, only
+		 * while this task is the one actually running (vApplicationTickHook
+		 * below) -- i.e. it already excludes preemption and blocking.
+		 * Captured here, before it's reset for the next job. */
+		pxThisTask->xLastCpuExecTime = pxThisTask->xExecTime;
+		if( pxThisTask->xExecTime > pxThisTask->xMaxCpuExecTime )
+		{
+			pxThisTask->xMaxCpuExecTime = pxThisTask->xExecTime;
+		}
+
+		pxThisTask->xCompletedJobCount++;
+		prvTraceEvent( pxThisTask->pcName, SCHED_EVT_COMPLETE, xResponseTime );
+
+		#if( SCHED_VERBOSE_DEMO == 1 )
+			Serial.print("Task ");
+			Serial.print(pxThisTask->pcName);
+			Serial.print(" end at Tickcount: ");
+			Serial.println(xCompletionTick);
+		#endif /* SCHED_VERBOSE_DEMO */
 
 		pxThisTask->xExecTime = 0;
 
@@ -566,17 +705,21 @@ void vSchedulerPeriodicTaskCreate( TaskFunction_t pvTaskCode, const char *pcName
 	pxNewTCB->xExecTime = 0;
 	pxNewTCB->xWorkIsDone = pdTRUE;
 
-	pxNewTCB->responseTime = 0;
-    pxNewTCB->startTime = 0;
-    pxNewTCB->deadlineMisses = 0;
-    pxNewTCB->maxResponseTime = 0;
+	pxNewTCB->xLastResponseTime = 0;
+	pxNewTCB->xMaxResponseTime = 0;
+	pxNewTCB->xResponseTimeSum = 0;
+	pxNewTCB->xLastCpuExecTime = 0;
+	pxNewTCB->xMaxCpuExecTime = 0;
+	pxNewTCB->xCompletedJobCount = 0;
+	pxNewTCB->xExecBudgetOverruns = 0;
+	pxNewTCB->xDeadlineMisses = 0;
 
 	// Set priorities and deadlines based on the current scheduling policy
     switch (schedSCHEDULING_POLICY) {
         case schedSCHEDULING_POLICY_RMS:
 			// pxNewTCB->xPriorityIsSet = pdTRUE;
 			break;
-        case schedSCHEDULING_POLICY_DM:
+        case schedSCHEDULING_POLICY_DMS:
             // Priorities are fixed and based on the period/deadline
             pxNewTCB->uxPriority = uxPriority;
             // pxNewTCB->xPriorityIsSet = pdTRUE;
@@ -591,6 +734,11 @@ void vSchedulerPeriodicTaskCreate( TaskFunction_t pvTaskCode, const char *pcName
 	
 	#if( schedUSE_TCB_ARRAY == 1 )
 		pxNewTCB->xInUse = pdTRUE;
+		/* Must be reset here, not just at static-array zero-init: without
+		 * this, a task created in a slot recycled from a deleted task keeps
+		 * that previous task's xPriorityIsSet==pdTRUE, and prvSetFixedPriorities()
+		 * would silently skip assigning it a priority on any later call. */
+		pxNewTCB->xPriorityIsSet = pdFALSE;
 	#endif /* schedUSE_TCB_ARRAY */
 	
 	#if( schedUSE_TIMING_ERROR_DETECTION_DEADLINE == 1 )
@@ -735,11 +883,15 @@ SchedTCB_t *pxShortestTaskPointer, *pxTCB;
 				}
 			#endif /* schedSCHEDULING_POLICY */
 		}
-		configASSERT( -1 <= xHighestPriority );
 		if( xPreviousShortest != xShortest )
 		{
 			xHighestPriority--;
 		}
+		/* configMAX_PRIORITIES is sized from schedACTIVE_NUMBER_OF_PERIODIC_TASKS
+		 * (see FreeRTOSConfig.h); this catches the two going out of sync, which
+		 * used to underflow this priority to -1 (wrapping to a huge UBaseType_t)
+		 * with no diagnostic. */
+		configASSERT( xHighestPriority >= 0 );
 		/* set highest priority to task with xShortest period (the highest priority is configMAX_PRIORITIES-1) */
 		pxShortestTaskPointer->uxPriority = xHighestPriority;
 		pxShortestTaskPointer->xPriorityIsSet = pdTRUE;
@@ -814,7 +966,8 @@ SchedTCB_t *pxShortestTaskPointer, *pxTCB;
 	static void prvDeadlineMissedHook( SchedTCB_t *pxTCB, TickType_t xTickCount )
 	{
 		//printf( "\r\ndeadline missed! %s tick %d\r\n", pxTCB->pcName, xTickCount );
-        pxTCB->deadlineMisses++;
+        pxTCB->xDeadlineMisses++;
+		prvTraceEvent( pxTCB->pcName, SCHED_EVT_DEADLINE_MISS, xTickCount );
 		/* Delete the pxTask and recreate it. */
 		vTaskDelete( *pxTCB->pxTaskHandle );
 		pxTCB->xExecTime = 0;
@@ -858,7 +1011,8 @@ SchedTCB_t *pxShortestTaskPointer, *pxTCB;
 	static void prvExecTimeExceedHook( TickType_t xTickCount, SchedTCB_t *pxCurrentTask )
 	{
 		//Serial.print( "\r\nworst case execution time exceeded! %s %d %d\r\n", pxCurrentTask->pcName, pxCurrentTask->xExecTime, xTickCount );
-        pxCurrentTask->maxResponseTime++;
+        pxCurrentTask->xExecBudgetOverruns++;
+		prvTraceEvent( pxCurrentTask->pcName, SCHED_EVT_OVERRUN, xTickCount );
 		pxCurrentTask->xMaxExecTimeExceeded = pdTRUE;
 		/* Is not suspended yet, but will be suspended by the scheduler later. */
 		pxCurrentTask->xSuspended = pdTRUE;
@@ -1113,27 +1267,17 @@ SchedTCB_t *pxShortestTaskPointer, *pxTCB;
 
 
 
+/* Context-switch counter only. Response time is measured once per job
+ * (release -> completion) in prvPeriodicTaskCode, not per dispatch here --
+ * a preempted job is switched in/out multiple times before it completes, so
+ * a switch-in-to-switch-out interval is not a job's response time. Deadline
+ * misses are counted exactly once, by prvDeadlineMissedHook's real deadline
+ * check -- not duplicated here. */
 void externTaskSwitchedIn() {
     contextSwitchCount++;
-    SchedTCB_t* currentTask = (SchedTCB_t*) pvTaskGetThreadLocalStoragePointer(xTaskGetCurrentTaskHandle(), schedTHREAD_LOCAL_STORAGE_POINTER_INDEX);
-    if (currentTask) {
-        currentTask->startTime = xTaskGetTickCount();  // Capture start time
-    }
 }
 
 void externTaskSwitchedOut() {
-    SchedTCB_t* currentTask = (SchedTCB_t*) pvTaskGetThreadLocalStoragePointer(xTaskGetCurrentTaskHandle(), schedTHREAD_LOCAL_STORAGE_POINTER_INDEX);
-    if (currentTask) {
-        TickType_t now = xTaskGetTickCount();
-        TickType_t responseTime = now - currentTask->startTime;
-        currentTask->responseTime += responseTime;  // Accumulate response time
-        if (responseTime > currentTask->maxResponseTime) {
-            currentTask->maxResponseTime = responseTime;  // Update max response time
-        }
-        if (now > currentTask->xAbsoluteDeadline) {
-            currentTask->deadlineMisses++;  // Count deadline misses
-        }
-    }
 }
 void reportIdleTick() {
     idleTicks++;
@@ -1171,18 +1315,32 @@ void initializePerformanceMetrics() {
     Serial.println("Performance Metrics Initialized");
 }
 
+/* Prints the four metrics (see root README's metrics table) for one task. */
+static void prvPrintTaskMetrics( SchedTCB_t *pxTCB )
+{
+    Serial.print("Task "); Serial.print(pxTCB->pcName); Serial.println(" Metrics:");
+    Serial.print("   Completed Jobs: "); Serial.println(pxTCB->xCompletedJobCount);
+    Serial.print("   Deadline Misses: "); Serial.println(pxTCB->xDeadlineMisses);
+    Serial.print("   Execution-Budget Overruns: "); Serial.println(pxTCB->xExecBudgetOverruns);
+    Serial.print("   Response Time (last/max, ticks): ");
+    Serial.print(pxTCB->xLastResponseTime); Serial.print(" / "); Serial.println(pxTCB->xMaxResponseTime);
+    if( pxTCB->xCompletedJobCount > 0 )
+    {
+        Serial.print("   Response Time (mean, ticks): ");
+        Serial.println( pxTCB->xResponseTimeSum / pxTCB->xCompletedJobCount );
+    }
+    Serial.print("   CPU Execution Time (last/max, ticks): ");
+    Serial.print(pxTCB->xLastCpuExecTime); Serial.print(" / "); Serial.println(pxTCB->xMaxCpuExecTime);
+}
+
 void printMetrics() {
     Serial.println("Performance Metrics:");
-    //Serial.print("Total Context Switches: "); Serial.println(contextSwitchCount);
-    //Serial.print("CPU Load: "); Serial.print(100.0 * (totalTicks - idleTicks) / totalTicks); Serial.println("%");
+    Serial.print("Total Context Switches: "); Serial.println(contextSwitchCount);
 
     #if (schedUSE_TCB_ARRAY == 1)
         for (int i = 0; i < schedMAX_NUMBER_OF_PERIODIC_TASKS; i++) {
             if (xTCBArray[i].xInUse) {
-                Serial.print("Task "); Serial.print(xTCBArray[i].pcName); Serial.println(" Metrics:");
-               // Serial.print("   Total Response Time: "); Serial.println(xTCBArray[i].responseTime);
-                Serial.print("   Deadline Misses: "); Serial.println(xTCBArray[i].deadlineMisses);
-                Serial.print("   Worst Case Response Time Exceeded: "); Serial.println(xTCBArray[i].maxResponseTime);
+                prvPrintTaskMetrics( &xTCBArray[i] );
             }
         }
     #elif (schedUSE_TCB_SORTED_LIST == 1)
@@ -1190,24 +1348,21 @@ void printMetrics() {
 			List_t *pxList= &xTCBList;
 		#else
 			List_t *pxList= &xTCBListAll;
-			
+
 		#endif
 
-        // List_t *pxList = (schedEDF_NAIVE == 1) ? &xTCBList : &xTCBListAll;
         const ListItem_t *pxTCBListEndMarker = listGET_END_MARKER(pxList);
         ListItem_t *pxTCBListItem = listGET_HEAD_ENTRY(pxList);
 
-        int i = 0;
         while (pxTCBListItem != pxTCBListEndMarker) {
             SchedTCB_t *pxTCB = listGET_LIST_ITEM_OWNER(pxTCBListItem);
-            Serial.print("Task "); Serial.print(pxTCB->pcName); Serial.println(" Metrics:");
-            //Serial.print("   Total Response Time: "); Serial.println(pxTCB->responseTime);
-            Serial.print("   Deadline Misses: "); Serial.println(pxTCB->deadlineMisses);
-            Serial.print("   Worst Case Response Time Exceeded: "); Serial.println(pxTCB->maxResponseTime);
-            i++;
+            prvPrintTaskMetrics( pxTCB );
             pxTCBListItem = listGET_NEXT(pxTCBListItem);
         }
     #endif
+
+    Serial.println("Trace log:");
+    dumpTraceCSV();
 }
 /* This function must be called before any other function call from this module. */
 void vSchedulerInit( void )
@@ -1240,6 +1395,13 @@ void vSchedulerInit( void )
 void vSchedulerStart( void )
 {  Serial.println("Scheduler started.");
 	totalTicks = 0;
+
+	/* configMAX_PRIORITIES (FreeRTOSConfig.h) is sized from
+	 * schedACTIVE_NUMBER_OF_PERIODIC_TASKS (schedPolicy.h) on the assumption
+	 * that this many periodic tasks were actually created. If a task was
+	 * added/removed in main.ino without updating that constant, fail loudly
+	 * here instead of silently underflowing a priority later. */
+	configASSERT( xTaskCounter == schedACTIVE_NUMBER_OF_PERIODIC_TASKS );
 
 	#if( schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_RMS || schedSCHEDULING_POLICY == schedSCHEDULING_POLICY_DMS )
 		Serial.println("inside RMS.");
